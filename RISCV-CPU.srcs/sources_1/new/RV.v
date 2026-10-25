@@ -134,6 +134,31 @@ module RV #(
     reg [31:0] PC_Offset;
     wire [31:0] PC_IN;
     wire [31:0] PC_Sum;
+    reg [4:0] rs1_E = 0;
+    reg [4:0] rs2_E = 0;
+    reg [4:0] rs2_M = 0;
+    wire UsesRs1_D;
+    wire UsesRs2_D;
+    wire LoadStall;
+    wire Redirect_E;
+    wire StallF;
+    wire StallD;
+    wire FlushD;
+    wire FlushE;
+    wire Forward1D;
+    wire Forward2D;
+    reg [1:0] ForwardAE;
+    reg [1:0] ForwardBE;
+    wire ForwardM;
+    wire [31:0] DecodeRD1_D;
+    wire [31:0] DecodeRD2_D;
+    reg [31:0] ForwardRD1_E;
+    reg [31:0] ForwardRD2_E;
+    wire [31:0] Operand1_E;
+    wire [31:0] Operand2_E;
+    reg OperandsHeld_E = 0;
+    reg [31:0] HeldRD1_E = 0;
+    reg [31:0] HeldRD2_E = 0;
 
     assign Instr_F = Instr;
     assign PC = PC_F;
@@ -145,13 +170,88 @@ module RV #(
     assign Funct3_D = Instr_D[14:12];
     assign Funct7_D = Instr_D[31:25];
 
+    assign UsesRs1_D = (Opcode_D == 7'h33) || (Opcode_D == 7'h13) ||
+                       (Opcode_D == 7'h03) || (Opcode_D == 7'h23) ||
+                       (Opcode_D == 7'h63) || (Opcode_D == 7'h67);
+    assign UsesRs2_D = (Opcode_D == 7'h33) || (Opcode_D == 7'h63);
+    assign LoadStall = Valid_D && Valid_E && RegWrite_E &&
+                       (MemtoReg_E == 2'b10) && (rd_E != 0) &&
+                       ((UsesRs1_D && rs1_D == rd_E) || (UsesRs2_D && rs2_D == rd_E));
+    assign Redirect_E = Valid_E && !RESET && !Busy && (PCSrc_E != 2'b00);
+    assign StallF = Busy || LoadStall;
+    assign StallD = Busy || LoadStall;
+    assign FlushD = Redirect_E;
+    assign FlushE = !Busy && (LoadStall || Redirect_E);
+    assign Forward1D = WE && (rd_W != 0) && (rs1_D == rd_W);
+    assign Forward2D = WE && (rd_W != 0) && (rs2_D == rd_W);
+    assign DecodeRD1_D = Forward1D ? WD_W : RD1_D;
+    assign DecodeRD2_D = Forward2D ? WD_W : RD2_D;
+    assign ForwardM = Valid_M && MemWrite_M && WE && (MemtoReg_W == 2'b10) &&
+                      (rd_W != 0) && (rs2_M == rd_W);
+
+    always @(*) begin
+        ForwardAE = 2'b00;
+        ForwardBE = 2'b00;
+        if (Valid_E && rs1_E != 0) begin
+            if (Valid_M && RegWrite_M && rd_M == rs1_E) begin
+                if (MemtoReg_M != 2'b10) ForwardAE = 2'b10;
+            end
+            else if (WE && rd_W == rs1_E) ForwardAE = 2'b01;
+        end
+        if (Valid_E && rs2_E != 0) begin
+            if (Valid_M && RegWrite_M && rd_M == rs2_E) begin
+                if (MemtoReg_M != 2'b10) ForwardBE = 2'b10;
+            end
+            else if (WE && rd_W == rs2_E) ForwardBE = 2'b01;
+        end
+        case (ForwardAE)
+            2'b10: ForwardRD1_E = ALUResult_M;
+            2'b01: ForwardRD1_E = WD_W;
+            default: ForwardRD1_E = RD1_E;
+        endcase
+        case (ForwardBE)
+            2'b10: ForwardRD2_E = ALUResult_M;
+            2'b01: ForwardRD2_E = WD_W;
+            default: ForwardRD2_E = RD2_E;
+        endcase
+    end
+
+    assign Operand1_E = OperandsHeld_E ? HeldRD1_E : ForwardRD1_E;
+    assign Operand2_E = OperandsHeld_E ? HeldRD2_E : ForwardRD2_E;
+
     always @(posedge CLK) begin
-        if (RESET) begin
+        if (RESET || !Busy) begin
+            OperandsHeld_E <= 0;
+            HeldRD1_E <= 0;
+            HeldRD2_E <= 0;
+        end
+        else if (!OperandsHeld_E) begin
+            OperandsHeld_E <= 1;
+            HeldRD1_E <= ForwardRD1_E;
+            HeldRD2_E <= ForwardRD2_E;
+        end
+    end
+
+    always @(posedge CLK) begin
+        if (RESET || FlushE) begin
+            rs1_E <= 0;
+            rs2_E <= 0;
+        end
+        else if (!Busy) begin
+            rs1_E <= rs1_D;
+            rs2_E <= rs2_D;
+        end
+        if (RESET || Busy) rs2_M <= 0;
+        else rs2_M <= rs2_E;
+    end
+
+    always @(posedge CLK) begin
+        if (RESET || FlushD) begin
             Instr_D <= 32'h00000013;
             PC_D <= 0;
             Valid_D <= 0;
         end
-        else if (!Busy) begin
+        else if (!StallD) begin
             Instr_D <= Instr_F;
             PC_D <= PC_F;
             Valid_D <= 1;
@@ -159,7 +259,7 @@ module RV #(
     end
 
     always @(posedge CLK) begin
-        if (RESET) begin
+        if (RESET || FlushE) begin
             Instr_E <= 32'h00000013;
             PC_E <= 0;
             RD1_E <= 0;
@@ -181,8 +281,8 @@ module RV #(
         else if (!Busy) begin
             Instr_E <= Instr_D;
             PC_E <= PC_D;
-            RD1_E <= RD1_D;
-            RD2_E <= RD2_D;
+            RD1_E <= DecodeRD1_D;
+            RD2_E <= DecodeRD2_D;
             ExtImm_E <= ExtImm_D;
             rd_E <= rd_D;
             Funct3_E <= Funct3_D;
@@ -215,7 +315,7 @@ module RV #(
             Instr_M <= Instr_E;
             PC_M <= PC_E;
             ALUResult_M <= ExecutionResult_E;
-            WriteData_M <= RD2_E;
+            WriteData_M <= Operand2_E;
             rd_M <= rd_E;
             RegWrite_M <= RegWrite_E;
             MemWrite_M <= MemWrite_E;
@@ -248,7 +348,7 @@ module RV #(
     end
 
     assign ALUResult = ALUResult_M;
-    assign WriteData_out = WriteData_M;
+    assign WriteData_out = ForwardM ? WD_W : WriteData_M;
     assign MemWrite_out = {4{Valid_M & MemWrite_M & ~RESET}};
     assign MemRead = Valid_M & RegWrite_M & (MemtoReg_M == 2'b10) & ~RESET;
     assign ReadData_M = ReadData_in;
@@ -314,16 +414,16 @@ module RV #(
 
     always @(*) begin
         casez (ALUSrcA_E)
-            2'b?0: Src_A_E = RD1_E;
+            2'b?0: Src_A_E = Operand1_E;
             2'b01: Src_A_E = 32'b0;
             2'b11: Src_A_E = PC_E;
-            default: Src_A_E = RD1_E;
+            default: Src_A_E = Operand1_E;
         endcase
         casez (ALUSrcB_E)
-            2'b?0: Src_B_E = RD2_E;
+            2'b?0: Src_B_E = Operand2_E;
             2'b01: Src_B_E = 32'd4;
             2'b11: Src_B_E = ExtImm_E;
-            default: Src_B_E = RD2_E;
+            default: Src_B_E = Operand2_E;
         endcase
     end
 
@@ -355,9 +455,9 @@ module RV #(
                 PC_Base = PC_E;
                 PC_Offset = ExtImm_E;
             end
-            2'b10: PC_Base = RD1_E;
+            2'b10: PC_Base = Operand1_E;
             2'b11: begin
-                PC_Base = RD1_E;
+                PC_Base = Operand1_E;
                 PC_Offset = ExtImm_E;
             end
             default: PC_Base = PC_F;
@@ -366,7 +466,7 @@ module RV #(
 
     assign PC_Sum = PC_Base + PC_Offset;
     assign PC_IN = {PC_Sum[31:1], PC_Sum[0] & ~PCSrc_E[1]};
-    assign WE_PC = (Busy == 1'b1) ? 1'b0 : 1'b1;
+    assign WE_PC = !StallF;
 
     ProgramCounter #(.PC_INIT(PC_INIT)) ProgramCounter1(
         CLK,

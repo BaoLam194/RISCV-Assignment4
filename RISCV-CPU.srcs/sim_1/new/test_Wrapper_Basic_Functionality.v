@@ -102,7 +102,7 @@ module test_Wrapper_BF #(
         check32(dut.RV1.RegFile1.RegBank[25], 0, "slt false");
         check32(dut.RV1.RegFile1.RegBank[21], 3, "xor and sltiu");
         check32(dut.RV1.RegFile1.RegBank[22], 5, "xori");
-        check32(dut.RV1.RegFile1.RegBank[31], 16, "auipc spacing");
+        check32(dut.RV1.RegFile1.RegBank[31], 4, "auipc spacing");
         check32(dut.DMEM[0], 2, "load subtract store");
         check32(LED_OUT, init_DIPs & 8'hff, "DIP to LED");
         check32(link_checks, 2, "jump link coverage");
@@ -142,6 +142,14 @@ module test_Wrapper_Pipeline_checks(output reg done = 0);
     integer cycle = 0, previous_write_cycle = -1;
     reg check_consecutive = 0;
     integer condition, taken;
+    integer load_stalls = 0;
+    integer redirects = 0;
+    integer store_forwards = 0;
+    reg [31:0] model_regs [0:31];
+    reg [31:0] model_memory [0:7];
+    reg [31:0] model_a, model_b, model_result, model_immediate;
+    integer trial, step, kind, destination, source1, source2, location;
+    integer random_seed = 3207;
 
     Wrapper dut(
         .DIP(16'h1234), .PB(3'd0), .LED_OUT(LED_OUT),
@@ -159,6 +167,24 @@ module test_Wrapper_Pipeline_checks(output reg done = 0);
         input [6:0] opcode;
         begin
             immediate = {value, rs1, funct3, rd, opcode};
+        end
+    endfunction
+
+    function [31:0] register_op;
+        input [6:0] funct7;
+        input [4:0] rs2, rs1;
+        input [2:0] funct3;
+        input [4:0] rd;
+        begin
+            register_op = {funct7, rs2, rs1, funct3, rd, 7'h33};
+        end
+    endfunction
+
+    function [31:0] store;
+        input [11:0] offset;
+        input [4:0] rs2, rs1;
+        begin
+            store = {offset[11:5], rs2, rs1, 3'b010, offset[4:0], 7'h23};
         end
     endfunction
 
@@ -193,7 +219,6 @@ module test_Wrapper_Pipeline_checks(output reg done = 0);
         input [31:0] instruction;
         begin
             raw(instruction);
-            repeat (3) raw(32'h00000013);
         end
     endtask
 
@@ -219,6 +244,9 @@ module test_Wrapper_Pipeline_checks(output reg done = 0);
             reads = 0;
             tx_count = 0;
             rx_count = 0;
+            load_stalls = 0;
+            redirects = 0;
+            store_forwards = 0;
             previous_write_cycle = -1;
         end
     endtask
@@ -235,22 +263,31 @@ module test_Wrapper_Pipeline_checks(output reg done = 0);
                 @(negedge CLK);
                 attempts = attempts + 1;
             end
-            if (attempts == 1000) $fatal(1, "Pipeline completion timeout");
+            if (attempts == 1000)
+                $fatal(1, "Pipeline program %0d completion timeout, PC=%h", programs + 1, dut.PC);
             programs = programs + 1;
         end
     endtask
 
     always @(posedge CLK) begin : monitor
         reg stalled;
+        reg load_stalled;
         reg [31:0] held_pc, held_d, held_e, held_a, held_b;
+        reg [31:0] held_src_a, held_src_b;
         cycle = cycle + 1;
         if (!RESET) begin
             stalled = dut.RV1.Busy;
+            load_stalled = dut.RV1.LoadStall && !stalled;
             held_pc = dut.PC;
             held_d = dut.RV1.Instr_D;
             held_e = dut.RV1.Instr_E;
             held_a = dut.RV1.RD1_E;
             held_b = dut.RV1.RD2_E;
+            held_src_a = dut.RV1.Src_A_E;
+            held_src_b = dut.RV1.Src_B_E;
+            if (load_stalled) load_stalls = load_stalls + 1;
+            if (dut.RV1.Redirect_E) redirects = redirects + 1;
+            if (dut.RV1.ForwardM) store_forwards = store_forwards + 1;
             if (dut.MemWrite_out != 0) stores = stores + 1;
             if (dut.MemRead) reads = reads + 1;
             if (!dut.RV1.Valid_M && (dut.MemRead !== 0 || dut.MemWrite_out !== 0))
@@ -273,6 +310,12 @@ module test_Wrapper_Pipeline_checks(output reg done = 0);
                     dut.RV1.Instr_E !== held_e || dut.RV1.RD1_E !== held_a || dut.RV1.RD2_E !== held_b)
                     $fatal(1, "Front-end or operands changed during MCycle stall");
                 if (dut.RV1.Valid_M !== 0) $fatal(1, "Busy execution did not insert a bubble");
+                if (dut.RV1.Src_A_E !== held_src_a || dut.RV1.Src_B_E !== held_src_b)
+                    $fatal(1, "Forwarded MCycle operands changed while Busy");
+            end
+            if (load_stalled) begin
+                if (dut.PC !== held_pc || dut.RV1.Instr_D !== held_d || dut.RV1.Valid_E !== 0)
+                    $fatal(1, "Load-use stall did not hold F/D and bubble E");
             end
         end
     end
@@ -340,6 +383,249 @@ module test_Wrapper_Pipeline_checks(output reg done = 0);
                 execute;
                 check32(dut.RV1.RegFile1.RegBank[20], taken ? 0 : 123, "branch outcome");
             end
+        end
+
+        prepare;
+        raw(immediate(9, 0, 3, 0, 7'h13));
+        raw(immediate(13, 0, 3, 0, 7'h13));
+        raw(register_op(0, 3, 3, 0, 4));
+        raw(register_op(0, 1, 3, 0, 5));
+        raw(immediate(5, 0, 6, 0, 7'h13));
+        raw(immediate(1, 0, 7, 0, 7'h13));
+        raw(immediate(2, 0, 8, 0, 7'h13));
+        raw(register_op(0, 6, 6, 0, 9));
+        raw(store(4, 4, 10));
+        execute;
+        check32(dut.RV1.RegFile1.RegBank[4], 26, "M forwarding and newest writer");
+        check32(dut.RV1.RegFile1.RegBank[5], 20, "W to E forwarding");
+        check32(dut.RV1.RegFile1.RegBank[9], 10, "W to D forwarding");
+        check32(dut.DMEM[1], 26, "forwarded store data");
+        check32(load_stalls, 0, "ALU dependencies need no stalls");
+
+        prepare;
+        dut.DMEM[0] = 32'h10010004;
+        dut.DMEM[1] = 37;
+        raw(immediate(0, 10, 3, 2, 7'h03));
+        raw(immediate(0, 3, 4, 2, 7'h03));
+        raw(register_op(0, 4, 4, 0, 5));
+        raw(store(8, 5, 10));
+        raw(immediate(4, 10, 6, 2, 7'h03));
+        raw(store(12, 6, 10));
+        raw(immediate(4, 10, 0, 2, 7'h03));
+        raw(register_op(0, 0, 0, 0, 7));
+        execute;
+        check32(dut.RV1.RegFile1.RegBank[5], 74, "load-use both ALU operands");
+        check32(dut.DMEM[2], 74, "ALU to store forwarding");
+        check32(dut.DMEM[3], 37, "load to store forwarding");
+        check32(dut.RV1.RegFile1.RegBank[7], 0, "x0 never forwarded");
+        check32(load_stalls, 2, "load base and ALU each stall once");
+        check32(store_forwards, 1, "load store data bypass without stall");
+
+        prepare;
+        dut.DMEM[0] = 9;
+        raw(immediate(0, 10, 3, 2, 7'h03));
+        raw(immediate(3, 0, 4, 0, 7'h13));
+        raw(32'h000031b7);
+        raw(immediate(0, 10, 5, 2, 7'h03));
+        raw(32'h00005237);
+        raw(immediate(0, 10, 6, 2, 7'h03));
+        raw(32'h00603397);
+        execute;
+        check32(load_stalls, 0, "unused source fields do not stall");
+        check32(dut.RV1.RegFile1.RegBank[3], 32'h3000, "lui ignores forwarding");
+        check32(dut.RV1.RegFile1.RegBank[4], 32'h5000, "lui ignores source match");
+        check32(dut.RV1.RegFile1.RegBank[7], 32'h00a03018, "auipc keeps PC operand");
+
+        prepare;
+        raw(immediate(9, 0, 3, 0, 7'h13));
+        raw(immediate(4, 0, 4, 0, 7'h13));
+        raw(register_op(1, 4, 3, 0, 5));
+        raw(register_op(0, 5, 5, 0, 6));
+        raw(register_op(1, 4, 6, 4, 7));
+        raw(register_op(1, 4, 7, 6, 8));
+        raw(store(4, 8, 10));
+        execute;
+        check32(dut.RV1.RegFile1.RegBank[5], 36, "forwarded multiply operands");
+        check32(dut.RV1.RegFile1.RegBank[6], 72, "multiply result forwarding");
+        check32(dut.RV1.RegFile1.RegBank[7], 18, "dependent divide");
+        check32(dut.RV1.RegFile1.RegBank[8], 2, "dependent remainder");
+        check32(dut.DMEM[1], 2, "remainder forwarded into store");
+
+        prepare;
+        dut.DMEM[0] = 21;
+        raw(immediate(0, 10, 3, 2, 7'h03));
+        raw(register_op(1, 1, 3, 0, 4));
+        raw(register_op(1, 1, 4, 5, 5));
+        execute;
+        check32(dut.RV1.RegFile1.RegBank[4], 147, "load-use before multiply");
+        check32(dut.RV1.RegFile1.RegBank[5], 21, "dependent unsigned divide");
+        check32(load_stalls, 1, "load to MCycle single stall");
+
+        for (condition = 0; condition < 6; condition = condition + 1) begin
+            for (taken = 0; taken < 2; taken = taken + 1) begin
+                prepare;
+                raw(immediate(7, 0, 3, 0, 7'h13));
+                raw(immediate(-3, 0, 4, 0, 7'h13));
+                case (condition)
+                    0: raw(branch(0, 3, taken ? 3 : 4));
+                    1: raw(branch(1, 3, taken ? 4 : 3));
+                    2: raw(branch(4, taken ? 4 : 3, taken ? 3 : 4));
+                    3: raw(branch(5, taken ? 3 : 4, taken ? 4 : 3));
+                    4: raw(branch(6, taken ? 3 : 4, taken ? 4 : 3));
+                    5: raw(branch(7, taken ? 4 : 3, taken ? 3 : 4));
+                endcase
+                raw(immediate(123, 0, 20, 0, 7'h13));
+                raw(store(0, 1, 10));
+                raw(register_op(1, 2, 1, 0, 21));
+                execute;
+                check32(dut.RV1.RegFile1.RegBank[20], taken ? 0 : 123, "forwarded branch outcome");
+                check32(dut.DMEM[0], taken ? 0 : 7, "branch squashes wrong-path store");
+                check32(writes[21], taken ? 0 : 1, "branch squashes wrong-path MCycle");
+            end
+        end
+
+        prepare;
+        raw(32'h010001ef);
+        raw(store(0, 1, 10));
+        raw(register_op(1, 2, 1, 0, 21));
+        raw(immediate(99, 0, 20, 0, 7'h13));
+        raw(immediate(1, 3, 4, 0, 7'h13));
+        raw(32'h00000297);
+        raw(immediate(21, 5, 5, 0, 7'h13));
+        raw(immediate(0, 5, 6, 0, 7'h67));
+        raw(store(0, 1, 10));
+        raw(register_op(1, 2, 1, 0, 21));
+        raw(immediate(1, 6, 7, 0, 7'h13));
+        execute;
+        check32(dut.RV1.RegFile1.RegBank[3], 32'h00400004, "jal link");
+        check32(dut.RV1.RegFile1.RegBank[4], 32'h00400005, "jal link used at target");
+        check32(dut.RV1.RegFile1.RegBank[6], 32'h00400020, "jalr link");
+        check32(dut.RV1.RegFile1.RegBank[7], 32'h00400021, "jalr link used at target");
+        check32(stores, 0, "jumps squash stores");
+        check32(writes[21], 0, "jumps squash MCycle");
+        check32(dut.RV1.RegFile1.RegBank[20], 0, "jal skips third fall-through");
+
+        prepare;
+        dut.DMEM[0] = 32'h00400011;
+        raw(immediate(0, 10, 3, 2, 7'h03));
+        raw(immediate(0, 3, 4, 0, 7'h67));
+        raw(store(4, 1, 10));
+        raw(register_op(1, 2, 1, 0, 21));
+        raw(immediate(1, 4, 5, 0, 7'h13));
+        execute;
+        check32(load_stalls, 1, "load to jalr stalls once");
+        check32(dut.RV1.RegFile1.RegBank[5], 32'h00400009, "loaded jalr base and link");
+        check32(stores, 0, "loaded jump squashes store");
+
+        prepare;
+        dut.DMEM[0] = 7;
+        raw(immediate(0, 10, 3, 2, 7'h03));
+        raw(branch(0, 3, 1));
+        raw(store(4, 1, 10));
+        raw(register_op(1, 2, 1, 0, 21));
+        raw(immediate(99, 0, 20, 0, 7'h13));
+        execute;
+        check32(load_stalls, 1, "load to branch stalls once");
+        check32(stores, 0, "loaded branch squashes store");
+        check32(writes[21], 0, "loaded branch squashes MCycle");
+        check32(dut.RV1.RegFile1.RegBank[20], 0, "loaded branch target");
+
+        for (trial = 0; trial < 6; trial = trial + 1) begin
+            prepare;
+            for (step = 0; step < 32; step = step + 1) model_regs[step] = 0;
+            model_regs[1] = 7;
+            model_regs[2] = -3;
+            for (step = 0; step < 8; step = step + 1) begin
+                model_memory[step] = $random(random_seed);
+                dut.DMEM[step] = model_memory[step];
+            end
+            for (step = 0; step < 96; step = step + 1) begin
+                kind = ($random(random_seed) & 32'h7fffffff) % 16;
+                destination = 3 + ($random(random_seed) & 32'h7fffffff) % 7;
+                source1 = ($random(random_seed) & 32'h7fffffff) % 10;
+                source2 = ($random(random_seed) & 32'h7fffffff) % 10;
+                location = ($random(random_seed) & 32'h7fffffff) % 8;
+                model_a = model_regs[source1];
+                model_b = model_regs[source2];
+                model_immediate = $random(random_seed) & 32'hfff;
+                model_immediate = {{20{model_immediate[11]}}, model_immediate[11:0]};
+                case (kind)
+                    0: begin
+                        raw(register_op(0, source2, source1, 0, destination));
+                        model_result = model_a + model_b;
+                    end
+                    1: begin
+                        raw(register_op(7'h20, source2, source1, 0, destination));
+                        model_result = model_a - model_b;
+                    end
+                    2: begin
+                        raw(register_op(0, source2, source1, 4, destination));
+                        model_result = model_a ^ model_b;
+                    end
+                    3: begin
+                        raw(register_op(0, source2, source1, 6, destination));
+                        model_result = model_a | model_b;
+                    end
+                    4: begin
+                        raw(register_op(0, source2, source1, 7, destination));
+                        model_result = model_a & model_b;
+                    end
+                    5: begin
+                        raw(register_op(0, source2, source1, 1, destination));
+                        model_result = model_a << model_b[4:0];
+                    end
+                    6: begin
+                        raw(register_op(0, source2, source1, 5, destination));
+                        model_result = model_a >> model_b[4:0];
+                    end
+                    7: begin
+                        raw(register_op(7'h20, source2, source1, 5, destination));
+                        model_result = $signed(model_a) >>> model_b[4:0];
+                    end
+                    8: begin
+                        raw(register_op(0, source2, source1, 2, destination));
+                        model_result = $signed(model_a) < $signed(model_b);
+                    end
+                    9: begin
+                        raw(register_op(0, source2, source1, 3, destination));
+                        model_result = model_a < model_b;
+                    end
+                    10: begin
+                        raw(immediate(model_immediate[11:0], source1, destination, 0, 7'h13));
+                        model_result = model_a + model_immediate;
+                    end
+                    11: begin
+                        raw(immediate(model_immediate[11:0], source1, destination, 7, 7'h13));
+                        model_result = model_a & model_immediate;
+                    end
+                    12: begin
+                        raw(immediate(4*location, 10, destination, 2, 7'h03));
+                        model_result = model_memory[location];
+                    end
+                    13: begin
+                        raw(store(4*location, source2, 10));
+                        model_memory[location] = model_b;
+                        model_result = model_regs[destination];
+                    end
+                    14: begin
+                        raw(register_op(1, source2, source1, 0, destination));
+                        model_result = model_a * model_b;
+                    end
+                    15: begin
+                        raw(register_op(1, source2, source1, 4, destination));
+                        if (model_b == 0) model_result = 32'hffffffff;
+                        else if (model_a == 32'h80000000 && model_b == 32'hffffffff)
+                            model_result = 32'h80000000;
+                        else model_result = $signed(model_a) / $signed(model_b);
+                    end
+                endcase
+                model_regs[destination] = model_result;
+            end
+            execute;
+            for (step = 3; step < 10; step = step + 1)
+                check32(dut.RV1.RegFile1.RegBank[step], model_regs[step], "random dense register result");
+            for (step = 0; step < 8; step = step + 1)
+                check32(dut.DMEM[step], model_memory[step], "random dense memory result");
         end
 
         prepare;

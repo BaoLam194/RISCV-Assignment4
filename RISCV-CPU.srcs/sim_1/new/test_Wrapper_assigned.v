@@ -376,13 +376,9 @@ module test_Wrapper_MCycle #(
     task emit;
         input [31:0] instruction;
         begin
-            if (words > 508) $fatal(1, "CPU test program exceeds instruction memory");
+            if (words >= 512) $fatal(1, "CPU test program exceeds instruction memory");
             dut.IROM[words] = instruction;
             words = words + 1;
-            repeat (3) begin
-                dut.IROM[words] = 32'h00000013;
-                words = words + 1;
-            end
         end
     endtask
 
