@@ -27,6 +27,7 @@ module test_Wrapper_assigned;
 	reg RESET = 1'b1;
 	reg CLK = 1'b0;
 	integer errors = 0;
+	integer index;
 
 	Wrapper dut(
 		.DIP(DIP),
@@ -108,45 +109,47 @@ module test_Wrapper_assigned;
 	always #5 CLK = ~CLK;
 
 	initial begin
-		// Load after Wrapper's own time-zero memory initialisation has run.
-		#1;
-		dut.IROM[0]  = encode_u(20'h80000, 5'd1, 7'b0010111); // auipc x1, 0x80000
-		dut.IROM[1]  = encode_u(20'h00000, 5'd2, 7'b0010111); // auipc x2, 0
-		dut.IROM[2]  = encode_r(7'b0000000, 5'd2, 5'd1, 3'b001, 5'd3, 7'b0110011); // sll
-		dut.IROM[3]  = encode_r(7'b0000000, 5'd2, 5'd1, 3'b101, 5'd4, 7'b0110011); // srl
-		dut.IROM[4]  = encode_r(7'b0100000, 5'd2, 5'd1, 3'b101, 5'd5, 7'b0110011); // sra
-		dut.IROM[5]  = encode_i(12'h004, 5'd1, 3'b001, 5'd6, 7'b0010011); // slli 4
-		dut.IROM[6]  = encode_i(12'h004, 5'd1, 3'b101, 5'd7, 7'b0010011); // srli 4
-		dut.IROM[7]  = encode_i(12'h404, 5'd1, 3'b101, 5'd8, 7'b0010011); // srai 4
-		dut.IROM[8]  = encode_j(21'd8, 5'd0);  // jal x0, +8 (no link)
-		dut.IROM[9]  = encode_u(20'h11111, 5'd20, 7'b0010111); // must be skipped
-		dut.IROM[10] = encode_j(21'd8, 5'd9);  // jal x9, +8
-		dut.IROM[11] = encode_u(20'h22222, 5'd20, 7'b0010111); // must be skipped
-		dut.IROM[12] = encode_u(20'h00000, 5'd10, 7'b0010111); // auipc x10, 0
-		dut.IROM[13] = encode_i(12'h00c, 5'd10, 3'b000, 5'd11, 7'b1100111); // jalr
-		dut.IROM[14] = encode_u(20'h33333, 5'd20, 7'b0010111); // must be skipped
-		dut.IROM[15] = encode_j(21'd0, 5'd0);  // stop in a self-loop
 
-		// Sentinels make skipped instructions and writes to x0 observable.
+		#1;
+        for (index = 0; index < 512; index = index + 1)
+            dut.IROM[index] = 32'h00000013;
+		dut.IROM[0]  = encode_u(20'h80000, 5'd1, 7'b0010111);
+		dut.IROM[4]  = encode_u(20'h00000, 5'd2, 7'b0010111);
+		dut.IROM[8]  = encode_r(7'b0000000, 5'd2, 5'd1, 3'b001, 5'd3, 7'b0110011);
+		dut.IROM[12]  = encode_r(7'b0000000, 5'd2, 5'd1, 3'b101, 5'd4, 7'b0110011);
+		dut.IROM[16]  = encode_r(7'b0100000, 5'd2, 5'd1, 3'b101, 5'd5, 7'b0110011);
+		dut.IROM[20]  = encode_i(12'h004, 5'd1, 3'b001, 5'd6, 7'b0010011);
+		dut.IROM[24]  = encode_i(12'h004, 5'd1, 3'b101, 5'd7, 7'b0010011);
+		dut.IROM[28]  = encode_i(12'h404, 5'd1, 3'b101, 5'd8, 7'b0010011);
+		dut.IROM[32]  = encode_j(21'd32, 5'd0);
+		dut.IROM[36]  = encode_u(20'h11111, 5'd20, 7'b0010111);
+		dut.IROM[40] = encode_j(21'd32, 5'd9);
+		dut.IROM[44] = encode_u(20'h22222, 5'd20, 7'b0010111);
+		dut.IROM[48] = encode_u(20'h00000, 5'd10, 7'b0010111);
+		dut.IROM[52] = encode_i(12'h031, 5'd10, 3'b000, 5'd11, 7'b1100111);
+		dut.IROM[56] = encode_u(20'h33333, 5'd20, 7'b0010111);
+		dut.IROM[60] = encode_j(21'd0, 5'd0);
+
+
 		dut.RV1.RegFile1.RegBank[0] = 32'hDEAD_BEEF;
 		dut.RV1.RegFile1.RegBank[20] = 32'hCAFE_BABE;
 
 		#11 RESET = 1'b0;
-		repeat(13) @(posedge CLK);
+		wait (dut.RV1.Valid_W && dut.RV1.PC_W == 32'h004000f0);
 		#1;
 
 		check32("auipc source value", dut.RV1.RegFile1.RegBank[1], 32'h8040_0000);
-		check32("register shift amount", dut.RV1.RegFile1.RegBank[2], 32'h0040_0004);
-		check32("sll result", dut.RV1.RegFile1.RegBank[3], 32'h0400_0000);
-		check32("srl result", dut.RV1.RegFile1.RegBank[4], 32'h0804_0000);
-		check32("sra result", dut.RV1.RegFile1.RegBank[5], 32'hF804_0000);
+		check32("register shift amount", dut.RV1.RegFile1.RegBank[2], 32'h0040_0010);
+		check32("sll result", dut.RV1.RegFile1.RegBank[3], 32'h0000_0000);
+		check32("srl result", dut.RV1.RegFile1.RegBank[4], 32'h0000_8040);
+		check32("sra result", dut.RV1.RegFile1.RegBank[5], 32'hFFFF_8040);
 		check32("slli result", dut.RV1.RegFile1.RegBank[6], 32'h0400_0000);
 		check32("srli result", dut.RV1.RegFile1.RegBank[7], 32'h0804_0000);
 		check32("srai result", dut.RV1.RegFile1.RegBank[8], 32'hF804_0000);
-		check32("jal link", dut.RV1.RegFile1.RegBank[9], 32'h0040_002C);
-		check32("jalr base", dut.RV1.RegFile1.RegBank[10], 32'h0040_0030);
-		check32("jalr link", dut.RV1.RegFile1.RegBank[11], 32'h0040_0038);
-		check32("jalr target", dut.PC, 32'h0040_003C);
+		check32("jal link", dut.RV1.RegFile1.RegBank[9], 32'h0040_00A4);
+		check32("jalr base", dut.RV1.RegFile1.RegBank[10], 32'h0040_00C0);
+		check32("jalr link", dut.RV1.RegFile1.RegBank[11], 32'h0040_00D4);
+		check32("jalr target", dut.RV1.PC_W, 32'h0040_00F0);
 		check32("skipped fall-through instructions", dut.RV1.RegFile1.RegBank[20], 32'hCAFE_BABE);
 		check32("x0 write suppression", dut.RV1.RegFile1.RegBank[0], 32'hDEAD_BEEF);
 
@@ -158,7 +161,7 @@ module test_Wrapper_assigned;
 	end
 
 	initial begin
-		#300;
+		#3000;
 		$display("FAIL: testbench timeout");
 		$fatal(1, "Assigned-instruction testbench timeout");
 	end
@@ -245,29 +248,47 @@ module test_Wrapper_MCycle #(
     endfunction
 
     always @(posedge CLK) begin : scoreboard
-        reg [31:0] instruction, a, b, result, address;
+        reg [31:0] instruction, a, b, result, address, stalled_pc;
         reg [4:0] rd;
-        reg write_expected;
+        reg write_expected, was_busy;
         integer expected_cycles;
         integer reg_index;
         if (monitoring && !RESET) begin
-            if (dut.PC !== reference_pc)
-                $fatal(1, "PC mismatch: actual=%h expected=%h", dut.PC, reference_pc);
-            instruction = dut.Instr;
-            a = read_reference(instruction[19:15]);
-            b = read_reference(instruction[24:20]);
-            rd = instruction[11:7];
-            result = 0;
-            write_expected = 0;
+            was_busy = dut.RV1.Busy;
+            stalled_pc = dut.PC;
             if (dut.RV1.Busy === 1'b1) begin
-                if (instruction[6:0] !== 7'h33 || instruction[31:25] !== 7'h01)
-                    $fatal(1, "CPU stalled on a non-M instruction");
-                if (dut.RV1.WE !== 1'b0 || dut.RV1.WE_PC !== 1'b0 ||
-                    dut.MemWrite_out !== 4'b0000 || dut.MemRead !== 1'b0)
-                    $fatal(1, "Write or memory access enabled while Busy");
+                if (!dut.RV1.Valid_E || !dut.RV1.Start_E || dut.RV1.WE_PC !== 0)
+                    $fatal(1, "Incorrect multicycle execution stall");
                 busy_cycles = busy_cycles + 1;
             end
-            else if (dut.RV1.Busy === 1'b0) begin
+            else if (dut.RV1.Busy === 1'b0 && busy_cycles > 0) begin
+                expected_cycles = (dut.RV1.Funct3_E == 0 || dut.RV1.Funct3_E == 1) ? 16 : 32;
+                if (busy_cycles != expected_cycles)
+                    $fatal(1, "CPU M instruction cycles=%0d expected=%0d", busy_cycles, expected_cycles);
+                multicycle_checks = multicycle_checks + 1;
+                busy_cycles = 0;
+            end
+            else if (dut.RV1.Busy !== 1'b0)
+                $fatal(1, "Unknown CPU Busy signal");
+
+            if (dut.RV1.Valid_M) begin
+                if (dut.RV1.Instr_M[6:0] == 7'h23 && dut.MemWrite_out !== 4'b1111)
+                    $fatal(1, "Missing M-stage store enable");
+                if (dut.RV1.Instr_M[6:0] == 7'h03 && dut.MemRead !== 1'b1)
+                    $fatal(1, "Missing M-stage load enable");
+            end
+            else if (dut.MemWrite_out !== 0 || dut.MemRead !== 0)
+                $fatal(1, "Invalid M-stage entry accessed memory");
+
+            if (dut.RV1.Valid_W) begin
+                if (dut.RV1.PC_W !== reference_pc)
+                    $fatal(1, "Retirement PC mismatch: actual=%h expected=%h", dut.RV1.PC_W, reference_pc);
+                instruction = dut.RV1.Instr_W;
+                a = read_reference(instruction[19:15]);
+                b = read_reference(instruction[24:20]);
+                rd = instruction[11:7];
+                result = 0;
+                write_expected = 0;
                 case (instruction[6:0])
                     7'h37: begin
                         result = {instruction[31:12], 12'd0};
@@ -281,13 +302,8 @@ module test_Wrapper_MCycle #(
                     7'h33: begin
                         write_expected = 1;
                         if (instruction[31:25] == 7'h01) begin
-                            expected_cycles = (instruction[14:12] == 0 || instruction[14:12] == 1) ? 16 : 32;
-                            if (busy_cycles != expected_cycles)
-                                $fatal(1, "CPU M instruction cycles=%0d expected=%0d PC=%h", busy_cycles, expected_cycles, reference_pc);
                             result = m_result(instruction[14:12], a, b);
                             retirements = retirements + 1;
-                            multicycle_checks = multicycle_checks + 1;
-                            busy_cycles = 0;
                         end
                         else begin
                             if (instruction[31:25] != 0 || instruction[14:12] != 0)
@@ -297,38 +313,40 @@ module test_Wrapper_MCycle #(
                     end
                     7'h23: begin
                         address = a + {{20{instruction[31]}}, instruction[31:25], instruction[11:7]};
-                        if (address !== 32'h10010000 || instruction[14:12] != 2 || dut.MemWrite_out !== 4'b1111)
+                        if (address !== 32'h10010000 || instruction[14:12] != 2)
                             $fatal(1, "Incorrect dependent store");
                         reference_memory = b;
+                        if (dut.DMEM[0] !== reference_memory) $fatal(1, "Dependent store result mismatch");
                     end
                     7'h03: begin
                         address = a + {{20{instruction[31]}}, instruction[31:20]};
-                        if (address !== 32'h10010000 || instruction[14:12] != 2 || dut.MemRead !== 1'b1)
+                        if (address !== 32'h10010000 || instruction[14:12] != 2)
                             $fatal(1, "Incorrect dependent load");
                         result = reference_memory;
                         write_expected = 1;
                     end
                     7'h6f: begin
                         if (instruction !== 32'h0000006f) $fatal(1, "Unsupported jump in CPU test");
+                        result = dut.RV1.PC_W + 4;
                         write_expected = 1;
                     end
                     default: $fatal(1, "Unknown CPU instruction: %h", instruction);
                 endcase
-                if (dut.RV1.WE !== write_expected || dut.RV1.WE_PC !== 1'b1)
-                    $fatal(1, "Incorrect retirement write enables");
+                if (dut.RV1.WE !== write_expected)
+                    $fatal(1, "Incorrect retirement write enable");
+                if (write_expected && dut.RV1.WD_W !== result)
+                    $fatal(1, "Writeback data mismatch: actual=%h expected=%h", dut.RV1.WD_W, result);
                 if (write_expected && rd != 0) reference_regs[rd] = result;
                 if (instruction[6:0] != 7'h6f) reference_pc = reference_pc + 4;
             end
-            else
-                $fatal(1, "Unknown CPU Busy signal");
+            else if (dut.RV1.WE !== 0)
+                $fatal(1, "Invalid W-stage entry wrote a register");
             #1;
-            if (dut.PC !== reference_pc)
-                $fatal(1, "PC changed incorrectly after edge: actual=%h expected=%h", dut.PC, reference_pc);
+            if (was_busy && dut.PC !== stalled_pc) $fatal(1, "PC advanced while Busy");
             for (reg_index = 0; reg_index < 32; reg_index = reg_index + 1)
                 if (dut.RV1.RegFile1.RegBank[reg_index] !== reference_regs[reg_index])
-                    $fatal(1, "Register x%0d mismatch: actual=%h expected=%h PC=%h",
-                        reg_index, dut.RV1.RegFile1.RegBank[reg_index], reference_regs[reg_index], reference_pc);
-            if (dut.DMEM[0] !== reference_memory) $fatal(1, "Dependent memory result mismatch");
+                    $fatal(1, "Register x%0d mismatch: actual=%h expected=%h",
+                        reg_index, dut.RV1.RegFile1.RegBank[reg_index], reference_regs[reg_index]);
         end
     end
 
@@ -338,7 +356,7 @@ module test_Wrapper_MCycle #(
             @(negedge CLK);
             monitoring = 0;
             RESET = 1;
-            for (index = 0; index < 128; index = index + 1)
+            for (index = 0; index < 512; index = index + 1)
                 dut.IROM[index] = 32'h00000013;
             for (index = 0; index < 32; index = index + 1) begin
                 reference_regs[index] = 32'hcafe0000 + index;
@@ -358,9 +376,13 @@ module test_Wrapper_MCycle #(
     task emit;
         input [31:0] instruction;
         begin
-            if (words >= 128) $fatal(1, "CPU test program exceeds instruction memory");
+            if (words > 508) $fatal(1, "CPU test program exceeds instruction memory");
             dut.IROM[words] = instruction;
             words = words + 1;
+            repeat (3) begin
+                dut.IROM[words] = 32'h00000013;
+                words = words + 1;
+            end
         end
     endtask
 
@@ -387,11 +409,7 @@ module test_Wrapper_MCycle #(
             repeat (1000) begin
                 @(posedge CLK);
                 #2;
-                if (dut.PC === stop_pc) begin
-                    repeat (2) begin
-                        @(posedge CLK);
-                        #2;
-                    end
+                if (dut.RV1.Valid_W && dut.RV1.PC_W === stop_pc) begin
                     if (retirements != expected_retirements || busy_cycles != 0)
                         $fatal(1, "Incorrect retirement count: %0d expected=%0d", retirements, expected_retirements);
                     monitoring = 0;

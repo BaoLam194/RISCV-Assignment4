@@ -62,13 +62,13 @@ module Decoder(
                 RegWrite = 1'b1;
                 MemWrite = 1'b0;
                 MemtoReg = 2'b00;
-                ALUSrcA = 2'bX0; // x0
-                ALUSrcB = 2'bX0; // x0
-                ImmSrc = 3'bXXX; // xxx
+                ALUSrcA = 2'b00;
+                ALUSrcB = 2'b00;
+                ImmSrc = 3'b000;
                 ALUControl = {Funct3, Funct7[5]};
-                MCycleOp = 2'bxx; // xx
+                MCycleOp = 2'b00;
                 Start = 1'b0; 
-                if (Funct7[0] == 1'b1) begin // multiply and divide
+                if (Funct7 == 7'b0000001) begin
                     Start = 1'b1; 
                     case(Funct3)
                         3'h0: begin // mul
@@ -99,67 +99,69 @@ module Decoder(
                             MCycleOp = 2'b11;
                             MemtoReg = 2'b01;
                         end
-                        default: begin 
-                            MCycleOp = 2'bxx;
-                            MemtoReg = 2'bxx;
+                        default: begin
+                            MCycleOp = 2'b00;
+                            MemtoReg = 2'b00;
+                            Start = 1'b0;
+                            RegWrite = 1'b0;
                         end
                     endcase
                 end
             end
-            7'h13: begin // DP Immediate
+            7'h13: begin
                 PCS = 2'b00;
                 RegWrite = 1'b1;
                 MemWrite = 1'b0;
                 MemtoReg = 2'b00;
-                ALUSrcA = 2'bX0; // x0
+                ALUSrcA = 2'b00;
                 ALUSrcB = 2'b11;
                 ImmSrc = 3'b011;
                 if (Funct3 == 3'h5) begin
-                    ALUControl = {Funct3, Funct7[5]}; // {Funct3, Immediate[10]}
+                    ALUControl = {Funct3, Funct7[5]};
                 end
                 else begin
-                    ALUControl = {Funct3, 1'b0}; // {Funct3, 1'b0}
+                    ALUControl = {Funct3, 1'b0};
                 end
-                MCycleOp = 2'bxx; // xx
+                MCycleOp = 2'b00;
                 Start = 1'b0; 
             end
-            7'h03: begin // load
+            7'h03: begin
                 PCS = 2'b00;
                 RegWrite = 1'b1;
                 MemWrite = 1'b0;
                 MemtoReg = 2'b10;
-                ALUSrcA = 2'bX0; // x0
+                ALUSrcA = 2'b00;
                 ALUSrcB = 2'b11;
                 ImmSrc = 3'b011;
                 ALUControl = 4'b0000;
-                MCycleOp = 2'bxx; // xx
+                MCycleOp = 2'b00;
                 Start = 1'b0; 
             end
-            7'h23: begin // store
+            7'h23: begin
                 PCS = 2'b00;
                 RegWrite = 1'b0;
                 MemWrite = 1'b1;
-                MemtoReg = 2'bXX; // xx
-                ALUSrcA = 2'bX0; // x0
+                MemtoReg = 2'b00;
+                ALUSrcA = 2'b00;
                 ALUSrcB = 2'b11;
                 ImmSrc = 3'b110;
                 ALUControl = 4'b0000;
-                MCycleOp = 2'bxx; // xx
+                MCycleOp = 2'b00;
                 Start = 1'b0; 
             end
-            7'h63: begin // branch
+            7'h63: begin
                 PCS = 2'b01;
                 RegWrite = 1'b0;
                 MemWrite = 1'b0;
-                MemtoReg = 2'bXX; // xx
-                ALUSrcA = 2'bX0; // x0
-                ALUSrcB = 2'bX0; // x0
+                MemtoReg = 2'b00;
+                ALUSrcA = 2'b00;
+                ALUSrcB = 2'b00;
                 ImmSrc = 3'b111;
                 ALUControl = 4'b0001;
-                MCycleOp = 2'bxx; // xx
+                MCycleOp = 2'b00;
                 Start = 1'b0; 
             end
-            7'h6F: begin // jal
+            7'h6F: begin
                 PCS = 2'b10;
                 RegWrite = 1'b1;
                 MemWrite = 1'b0;
@@ -168,10 +170,10 @@ module Decoder(
                 ALUSrcB = 2'b01;
                 ImmSrc = 3'b010;
                 ALUControl = 4'b0000;
-                MCycleOp = 2'bxx; // xx
+                MCycleOp = 2'b00;
                 Start = 1'b0; 
             end
-            7'h17: begin // auipc
+            7'h17: begin
                 PCS = 2'b00;
                 RegWrite = 1'b1;
                 MemWrite = 1'b0;
@@ -180,10 +182,10 @@ module Decoder(
                 ALUSrcB = 2'b11;
                 ImmSrc = 3'b000;
                 ALUControl = 4'b0000;
-                MCycleOp = 2'bxx; // xx
+                MCycleOp = 2'b00;
                 Start = 1'b0; 
             end
-            7'h37: begin // lui
+            7'h37: begin
                 PCS = 2'b00;
                 RegWrite = 1'b1;
                 MemWrite = 1'b0;
@@ -192,10 +194,10 @@ module Decoder(
                 ALUSrcB = 2'b11;
                 ImmSrc = 3'b000;
                 ALUControl = 4'b0000;
-                MCycleOp = 2'bxx; // xx
+                MCycleOp = 2'b00;
                 Start = 1'b0; 
             end
-            7'h67: begin // jalr
+            7'h67: begin
                 PCS = 2'b11;
                 RegWrite = 1'b1;
                 MemWrite = 1'b0;
@@ -204,19 +206,19 @@ module Decoder(
                 ALUSrcB = 2'b01;
                 ImmSrc = 3'b011;
                 ALUControl = 4'b0000;
-                MCycleOp = 2'bxx; // xx
+                MCycleOp = 2'b00;
                 Start = 1'b0; 
             end
             default: begin
-                PCS = 2'bx;
-                RegWrite = 1'bx;
-                MemWrite = 1'bx;
-                MemtoReg = 1'bx;
-                ALUSrcA = 2'bx;
-                ALUSrcB = 2'bx;
-                ImmSrc = 3'bx;
-                ALUControl = 4'bx;
-                MCycleOp = 2'bxx; // xx
+                PCS = 2'b00;
+                RegWrite = 1'b0;
+                MemWrite = 1'b0;
+                MemtoReg = 2'b00;
+                ALUSrcA = 2'b00;
+                ALUSrcB = 2'b00;
+                ImmSrc = 3'b000;
+                ALUControl = 4'b0000;
+                MCycleOp = 2'b00;
                 Start = 1'b0; 
             end
         endcase

@@ -54,30 +54,33 @@ module test_Wrapper_Demo;
         if (RESET) busy_edges = 0;
         else if (dut.RV1.Busy === 1'b1) begin
             stalled_pc = dut.PC;
-            if (dut.Instr[6:0] !== 7'h33 || dut.Instr[31:25] !== 7'h01)
+            if (!dut.RV1.Valid_E || !dut.RV1.Start_E)
                 $fatal(1, "Busy asserted outside an M instruction");
-            if (dut.RV1.WE !== 0 || dut.RV1.WE_PC !== 0 ||
-                dut.MemWrite_out !== 0 || dut.MemRead !== 0)
-                $fatal(1, "Side effect enabled during multicycle stall");
+            if (dut.RV1.WE_PC !== 0)
+                $fatal(1, "PC enabled during multicycle stall");
             busy_edges = busy_edges + 1;
             #1;
             if (!RESET && dut.PC !== stalled_pc)
                 $fatal(1, "PC advanced while Busy");
         end
         else if (dut.RV1.Busy === 1'b0 && busy_edges > 0) begin
-            expected_cycles = dut.Instr[14:12] == 0 ? 16 : 32;
+            expected_cycles = dut.RV1.Funct3_E == 0 ? 16 : 32;
             if (busy_edges != expected_cycles)
                 $fatal(1, "Busy edges=%0d expected=%0d", busy_edges, expected_cycles);
-            if (dut.Instr[6:0] !== 7'h33 || dut.Instr[31:25] !== 7'h01 ||
-                (dut.Instr[14:12] != 0 && dut.Instr[14:12] != 4 && dut.Instr[14:12] != 5))
-                $fatal(1, "Unexpected instruction at M retirement");
-            if (dut.RV1.WE !== 1 || dut.RV1.WE_PC !== 1)
-                $fatal(1, "CPU failed to resume at M retirement");
-            retired = retired + 1;
+            if (!dut.RV1.Valid_E || !dut.RV1.Start_E ||
+                (dut.RV1.Funct3_E != 0 && dut.RV1.Funct3_E != 4 && dut.RV1.Funct3_E != 5))
+                $fatal(1, "Unexpected instruction at MCycle completion");
+            if (dut.RV1.WE_PC !== 1)
+                $fatal(1, "CPU failed to resume at MCycle completion");
             busy_edges = 0;
         end
         else if (dut.RV1.Busy !== 1'b0)
             $fatal(1, "Unknown Busy signal");
+        if (!RESET && dut.RV1.Valid_W && dut.RV1.Instr_W[6:0] == 7'h33 &&
+            dut.RV1.Instr_W[31:25] == 7'h01) begin
+            if (dut.RV1.WE !== 1) $fatal(1, "Missing MCycle register writeback");
+            retired = retired + 1;
+        end
     end
 
     task start_suite;
@@ -151,7 +154,7 @@ module test_Wrapper_Demo;
             @(negedge CLK);
             DIP = (upper_switches & 16'hFFC0) | (view << 4) | index;
             retired_before = retired;
-            repeat (80) @(negedge CLK);
+            repeat (320) @(negedge CLK);
             if (SEVENSEGHEX !== expected_display || LED_OUT !== expected_led)
                 $fatal(1, "Case %0d view %0d display=%h expected=%h LED=%h expected=%h",
                        index, view, SEVENSEGHEX, expected_display, LED_OUT, expected_led);
