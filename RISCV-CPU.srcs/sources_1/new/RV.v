@@ -137,8 +137,6 @@ module RV #(
     reg [4:0] rs1_E = 0;
     reg [4:0] rs2_E = 0;
     reg [4:0] rs2_M = 0;
-    wire UsesRs1_D;
-    wire UsesRs2_D;
     wire LoadStall;
     wire Redirect_E;
     wire StallF;
@@ -147,8 +145,8 @@ module RV #(
     wire FlushE;
     wire Forward1D;
     wire Forward2D;
-    reg [1:0] ForwardAE;
-    reg [1:0] ForwardBE;
+    wire [1:0] ForwardAE;
+    wire [1:0] ForwardBE;
     wire ForwardM;
     wire [31:0] DecodeRD1_D;
     wire [31:0] DecodeRD2_D;
@@ -170,40 +168,46 @@ module RV #(
     assign Funct3_D = Instr_D[14:12];
     assign Funct7_D = Instr_D[31:25];
 
-    assign UsesRs1_D = (Opcode_D == 7'h33) || (Opcode_D == 7'h13) ||
-                       (Opcode_D == 7'h03) || (Opcode_D == 7'h23) ||
-                       (Opcode_D == 7'h63) || (Opcode_D == 7'h67);
-    assign UsesRs2_D = (Opcode_D == 7'h33) || (Opcode_D == 7'h63);
-    assign LoadStall = Valid_D && Valid_E && RegWrite_E &&
-                       (MemtoReg_E == 2'b10) && (rd_E != 0) &&
-                       ((UsesRs1_D && rs1_D == rd_E) || (UsesRs2_D && rs2_D == rd_E));
-    assign Redirect_E = Valid_E && !RESET && !Busy && (PCSrc_E != 2'b00);
-    assign StallF = Busy || LoadStall;
-    assign StallD = Busy || LoadStall;
-    assign FlushD = Redirect_E;
-    assign FlushE = !Busy && (LoadStall || Redirect_E);
-    assign Forward1D = WE && (rd_W != 0) && (rs1_D == rd_W);
-    assign Forward2D = WE && (rd_W != 0) && (rs2_D == rd_W);
+    HazardUnit HazardUnit1(
+        .RESET(RESET),
+        .Busy(Busy),
+        .Valid_D(Valid_D),
+        .Valid_E(Valid_E),
+        .Valid_M(Valid_M),
+        .Opcode_D(Opcode_D),
+        .rs1_D(rs1_D),
+        .rs2_D(rs2_D),
+        .rs1_E(rs1_E),
+        .rs2_E(rs2_E),
+        .rs2_M(rs2_M),
+        .rd_E(rd_E),
+        .rd_M(rd_M),
+        .rd_W(rd_W),
+        .RegWrite_E(RegWrite_E),
+        .RegWrite_M(RegWrite_M),
+        .WE_W(WE),
+        .MemWrite_M(MemWrite_M),
+        .MemtoReg_E(MemtoReg_E),
+        .MemtoReg_M(MemtoReg_M),
+        .MemtoReg_W(MemtoReg_W),
+        .PCSrc_E(PCSrc_E),
+        .LoadStall(LoadStall),
+        .Redirect_E(Redirect_E),
+        .StallF(StallF),
+        .StallD(StallD),
+        .FlushD(FlushD),
+        .FlushE(FlushE),
+        .Forward1D(Forward1D),
+        .Forward2D(Forward2D),
+        .ForwardAE(ForwardAE),
+        .ForwardBE(ForwardBE),
+        .ForwardM(ForwardM)
+    );
+
     assign DecodeRD1_D = Forward1D ? WD_W : RD1_D;
     assign DecodeRD2_D = Forward2D ? WD_W : RD2_D;
-    assign ForwardM = Valid_M && MemWrite_M && WE && (MemtoReg_W == 2'b10) &&
-                      (rd_W != 0) && (rs2_M == rd_W);
 
     always @(*) begin
-        ForwardAE = 2'b00;
-        ForwardBE = 2'b00;
-        if (Valid_E && rs1_E != 0) begin
-            if (Valid_M && RegWrite_M && rd_M == rs1_E) begin
-                if (MemtoReg_M != 2'b10) ForwardAE = 2'b10;
-            end
-            else if (WE && rd_W == rs1_E) ForwardAE = 2'b01;
-        end
-        if (Valid_E && rs2_E != 0) begin
-            if (Valid_M && RegWrite_M && rd_M == rs2_E) begin
-                if (MemtoReg_M != 2'b10) ForwardBE = 2'b10;
-            end
-            else if (WE && rd_W == rs2_E) ForwardBE = 2'b01;
-        end
         case (ForwardAE)
             2'b10: ForwardRD1_E = ALUResult_M;
             2'b01: ForwardRD1_E = WD_W;
